@@ -1,47 +1,36 @@
 from sbrscrape import Scoreboard
 
+from src.Utils.tools import normalize_team_name
+
+
 class SbrOddsProvider:
-    
-    """ Abbreviations dictionary for team location which are sometimes saved with abbrev instead of full name. 
-    Moneyline options name require always full name
-    Returns:
-        string: Full location name
-    """    
+    """Fetches today's NBA odds for one sportsbook from sportsbookreview."""
 
     def __init__(self, sportsbook="fanduel"):
-        
         sb = Scoreboard(sport="NBA")
         self.games = sb.games if hasattr(sb, 'games') else []
         self.sportsbook = sportsbook
 
-    
     def get_odds(self):
-        """Function returning odds from Sbr server's json content
-
-        Returns:
-            dictionary: [home_team_name + ':' + away_team_name: { home_team: money_line_odds, away_team: money_line_odds }, under_over_odds: val]
+        """Returns
+        {home + ':' + away: {
+            home: {'money_line_odds': val}, away: {'money_line_odds': val},
+            'under_over_odds': total line, 'over_price': val, 'under_price': val}}
+        Any value is None when the sportsbook has not posted it.
         """
         dict_res = {}
         for game in self.games:
-            # Get team names
-            home_team_name = game['home_team'].replace("Los Angeles Clippers", "LA Clippers")
-            away_team_name = game['away_team'].replace("Los Angeles Clippers", "LA Clippers")
-            
-            money_line_home_value = money_line_away_value = totals_value = None
+            home_team_name = normalize_team_name(game['home_team'])
+            away_team_name = normalize_team_name(game['away_team'])
 
-            # Get money line bet values
-            if self.sportsbook in game['home_ml']:
-                money_line_home_value = game['home_ml'][self.sportsbook]
-            if self.sportsbook in game['away_ml']:
-                money_line_away_value = game['away_ml'][self.sportsbook]
-            
-            # Get totals bet value
-            if self.sportsbook in game['total']:
-                totals_value = game['total'][self.sportsbook]
-            
-            dict_res[home_team_name + ':' + away_team_name] =  { 
-                'under_over_odds': totals_value,
-                home_team_name: { 'money_line_odds': money_line_home_value }, 
-                away_team_name: { 'money_line_odds': money_line_away_value }
+            def book_value(key):
+                return (game.get(key) or {}).get(self.sportsbook)
+
+            dict_res[home_team_name + ':' + away_team_name] = {
+                'under_over_odds': book_value('total'),
+                'over_price': book_value('over_odds'),
+                'under_price': book_value('under_odds'),
+                home_team_name: {'money_line_odds': book_value('home_ml')},
+                away_team_name: {'money_line_odds': book_value('away_ml')},
             }
         return dict_res

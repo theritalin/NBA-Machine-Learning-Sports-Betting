@@ -1,6 +1,11 @@
-import requests
+from datetime import datetime
+
 import pandas as pd
+import requests
+
 from .Dictionaries import team_index_current
+
+REQUEST_TIMEOUT = 30
 
 games_header = {
     'user-agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -22,11 +27,37 @@ data_headers = {
     'Connection': 'keep-alive'
 }
 
+TODAYS_GAMES_URL = 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json'
+
+TEAM_STATS_URL = 'https://stats.nba.com/stats/leaguedashteamstats?' \
+                 'Conference=&DateFrom=&DateTo=&Division=&GameScope=&' \
+                 'GameSegment=&LastNGames=0&LeagueID=00&Location=&' \
+                 'MeasureType=Base&Month=0&OpponentTeamID=0&Outcome=&' \
+                 'PORound=0&PaceAdjust=N&PerMode=PerGame&Period=0&' \
+                 'PlayerExperience=&PlayerPosition=&PlusMinus=N&Rank=N&' \
+                 'Season={season}&SeasonSegment=&SeasonType=Regular+Season&ShotClockRange=&' \
+                 'StarterBench=&TeamID=0&TwoWay=0&VsConference=&VsDivision='
+
+
+def current_season(today=None):
+    """NBA season string for a date, e.g. November 2026 -> '2026-27'."""
+    today = today or datetime.now()
+    start_year = today.year if today.month >= 10 else today.year - 1
+    return f"{start_year}-{str(start_year + 1)[-2:]}"
+
+
+def team_stats_url(season=None):
+    return TEAM_STATS_URL.format(season=season or current_season())
+
+
+def normalize_team_name(name):
+    """Every data source must use the same names as stats.nba.com."""
+    return (name or '').strip().replace('Los Angeles Clippers', 'LA Clippers')
 
 
 def get_json_data(url):
-    raw_data = requests.get(url, headers=data_headers)
     try:
+        raw_data = requests.get(url, headers=data_headers, timeout=REQUEST_TIMEOUT)
         json = raw_data.json()
     except Exception as e:
         print(e)
@@ -34,10 +65,9 @@ def get_json_data(url):
     return json.get('resultSets')
 
 
-def get_todays_games_json(url):
-    raw_data = requests.get(url, headers=games_header)
-    json = raw_data.json()
-    return json.get('gs').get('g')
+def get_todays_games_json(url=TODAYS_GAMES_URL):
+    raw_data = requests.get(url, headers=games_header, timeout=REQUEST_TIMEOUT)
+    return raw_data.json().get('scoreboard', {}).get('games', [])
 
 
 def to_data_frame(data):
@@ -52,10 +82,12 @@ def to_data_frame(data):
 def create_todays_games(input_list):
     games = []
     for game in input_list:
-        home = game.get('h')
-        away = game.get('v')
-        home_team = home.get('tc') + ' ' + home.get('tn')
-        away_team = away.get('tc') + ' ' + away.get('tn')
+        home = game.get('homeTeam', {})
+        away = game.get('awayTeam', {})
+        home_team = normalize_team_name(f"{home.get('teamCity', '')} {home.get('teamName', '')}")
+        away_team = normalize_team_name(f"{away.get('teamCity', '')} {away.get('teamName', '')}")
+        if home_team not in team_index_current or away_team not in team_index_current:
+            continue
         games.append([home_team, away_team])
     return games
 

@@ -1,59 +1,76 @@
-# NBA Sports Betting Using Machine Learning 🏀
-<img src="https://github.com/kyleskom/NBA-Machine-Learning-Sports-Betting/blob/master/Screenshots/output.png" width="1010" height="292" />
+# NBA Bahis Önerileri (Makine Öğrenmesi) 🏀
 
-A machine learning AI used to predict the winners and under/overs of NBA games. Takes all team data from the 2007-08 season to current season, matched with odds of those games, using a neural network to predict winning bets for today's games. Achieves ~75% accuracy on money lines and ~58% on under/overs. Outputs expected value for teams money lines to provide better insight. 
-## Packages Used
+Bugünkü NBA maçları için takım istatistiklerinden kazanan ve alt/üst tahmini üretir, bunları bahis
+sitesinin oranlarıyla karşılaştırır ve **hangi bahsin oynanmaya değer olduğunu** tek tabloda gösterir.
 
-Use Python 3.8. In particular the packages/libraries used are...
+```
+▶ ÖNERİLEN BAHİSLER (en avantajlıdan başlayarak)
+  #  Maç                               Tür         BAHİS                    Oran         Kazanma  Beklenen kâr/100  Öneri      Yatır
+  1  Denver Nuggets @ Detroit Pistons  Maç Sonucu  Detroit Pistons kazanır  7.50 (+650)    18.6%             +39.1  ★★★ GÜÇLÜ  15.04
+```
 
-* Tensorflow - Machine learning library
-* XGBoost - Gradient boosting framework
-* Numpy - Package for scientific computing in Python
-* Pandas - Data manipulation and analysis
-* Colorama - Color text output
-* Tqdm - Progress bars
-* Requests - Http library
-* Scikit_learn - Machine learning library
-
-## Usage
-
-<img src="https://github.com/kyleskom/NBA-Machine-Learning-Sports-Betting/blob/master/Screenshots/Expected_value.png" width="1010" height="424" />
-
-Make sure all packages above are installed.
+## Kurulum ve kullanım
 
 ```bash
-$ git clone https://github.com/kyleskom/NBA-Machine-Learning-Sports-Betting.git
-$ cd NBA-Machine-Learning-Sports-Betting
-$ pip3 install -r requirements.txt
-$ python3 main.py -xgb -odds=fanduel
+pip3 install -r requirements.txt
+python3 main.py -odds=fanduel -kasa 1000
 ```
 
-Odds data will be automatically fetched from sbrodds if the -odds option is provided with a sportsbook.  Options include: fanduel, draftkings, betmgm, pointsbet, caesars, wynn, bet_rivers_ny
+| Seçenek | Anlamı |
+|---|---|
+| `-odds=fanduel` | Oranlar otomatik çekilir (fanduel, draftkings, betmgm, pointsbet, caesars, wynn, bet_rivers_ny). Verilmezse oranları elle girersiniz; ondalık (1.85) ya da Amerikan (-118) yazabilirsiniz. |
+| `-kasa 1000` | Toplam bahis bütçeniz. "Yatır" sütunu buna göre hesaplanır. |
+| `-xgb` / `-nn` / `-A` | XGBoost (varsayılan) / sinir ağı / ikisi birden. Sinir ağı için TensorFlow gerekir. |
+| `-season 2026-27` | Sezonu elle seçmek için (varsayılan: içinde bulunulan sezon). |
+| `-json` | Sonuçları JSON olarak verir. |
 
-If `-odds` is not given, enter the under/over and odds for today's games manually after starting the script.
+## Çıktı nasıl okunur?
 
-## Flask Web App
-<img src="https://github.com/kyleskom/NBA-Machine-Learning-Sports-Betting/blob/master/Screenshots/Flask-App.png" width="922" height="580" />
+- **ÖNERİLEN BAHİSLER**: yalnızca oynanmaya değer bulunan bahisler, en avantajlısı en üstte. Liste boşsa en iyi karar o gün oynamamaktır.
+- **Oran**: ondalık oran (parantez içinde Amerikan oranı). 2.10 = 100 yatır, kazanırsan 210 al.
+- **Kazanma**: bahsin tutma ihtimali.
+- **Beklenen kâr/100**: aynı bahsi çok kez oynasanız 100 birim başına ortalama kazanç. Eksi ise uzun vadede kaybettirir.
+- **Öneri**: ★★★ GÜÇLÜ (beklenen kâr ≥ %15), ★★ ORTA (≥ %7). Altındakiler listelenmez.
+- **Yatır**: çeyrek Kelly kriteriyle önerilen tutar; tek bahiste kasanın en fazla %3'ü.
+- **TÜM MAÇLAR**: her maç için modelin favorisi, iki tarafın oranı ve beklenen kârı, alt/üst tahmini.
 
-This repo also includes a small Flask application to help view the data from this tool in the browser.  To run it:
-```
+## Ne kadar güvenilir?
+
+`python3 backtest.py` modeli geçmiş sezonlarda dürüst biçimde sınar (yalnızca önceki sezonlarla eğitip
+sonraki sezonda bahis oynar, 2017-23, 6.679 maç):
+
+- Model tek başına bahis şirketinden **daha az** isabetli (%64'e karşı %67). Bu yüzden öneriler modelin
+  olasılığı ile bahis şirketinin (komisyonu çıkarılmış) olasılığının ortalamasına dayanır.
+- Önerilen maç sonucu bahislerinin getirisi 6 sezonda toplam **+%1 ile +%4** arasında; sezonlara göre
+  −%11 ile +%20 arasında oynuyor. Yani küçük ve garantisi olmayan bir avantaj.
+- Alt/üst modeli yazı-turadan farksız; yalnızca güveni %70'in üzerindeyken az da olsa tutuyor
+  (%70-80 güvende %54,5, %80 üstünde %60 isabet). Bu yüzden alt/üst bahsi yalnızca güven ≥ %80 iken önerilir.
+- Model sakatlık, kadro, dinlenme günü gibi bilgileri bilmez ve 2022-23 sezonuna kadarki veriyle eğitilmiştir.
+
+Kaybetmeyi göze alamayacağınız parayla oynamayın.
+
+## Web arayüzü
+
+```bash
 cd Flask
 flask --debug run
 ```
 
-## Getting new data and training models
-```
-# Create dataset with the latest data for 2022-23 season
-cd src/Process-Data
-python -m Get_Data
-python -m Create_Games
+Aynı tabloyu tarayıcıda üç bahis sitesi için gösterir; kasa tutarını sayfadan değiştirebilirsiniz.
 
-# Train models
+## Yeni veri ve model eğitimi
+
+```bash
+cd src/Process-Data
+python -m Get_Data        # sezon/yıl dosyanın başında elle ayarlanır
+python -m Create_Games
 cd ../Train-Models
 python -m XGBoost_Model_ML
 python -m XGBoost_Model_UO
 ```
 
-## Contributing
+## Testler
 
-All contributions welcomed and encouraged.
+```bash
+python3 -m unittest Tests/Expected_Value_Test.py Tests/Recommender_Test.py
+```
