@@ -14,39 +14,40 @@ import xgboost as xgb
 
 from src.Predict.Recommender import GOOD_EV, MODEL_WEIGHT, STRONG_EV
 from src.Utils.Expected_Value import american_to_decimal
+from src.Utils.tools import normalize_team_name
 
-NON_FEATURES = ['Score', 'Home-Team-Win', 'TEAM_NAME', 'Date', 'TEAM_NAME.1', 'Date.1', 'OU-Cover', 'OU']
-FIRST_TEST_SEASON = '2017-18'
+DATASET = 'dataset_2012-26'
+NON_FEATURES = ['index', 'Score', 'Home-Team-Win', 'TEAM_NAME', 'Date', 'index.1', 'TEAM_NAME.1', 'Date.1',
+                'OU-Cover', 'OU']
+FIRST_TEST_SEASON = 2017
+PARAMS = {'max_depth': 3, 'eta': 0.02, 'subsample': 0.8, 'colsample_bytree': 0.8, 'min_child_weight': 5,
+          'objective': 'binary:logistic', 'seed': 1}
+ROUNDS = 300
 
 
 def load():
     with sqlite3.connect('Data/dataset.sqlite') as con:
-        data = pd.read_sql_query('select * from "dataset_2012-23"', con, index_col='index')
-    odds = []
-    with sqlite3.connect('Data/odds.sqlite') as con:
+        data = pd.read_sql_query(f'select * from "{DATASET}"', con)
+    with sqlite3.connect('Data/OddsData.sqlite') as con:
         tables = pd.read_sql_query("select name from sqlite_master where type='table'", con).name
-        for table in tables:
-            frame = pd.read_sql_query(f'select * from "{table}"', con)
-            if 'Date' not in frame:  # one table was saved without a header row
-                continue
-            parts = frame['Date'].str.split('-', expand=True)  # '2022-23-1019'
-            month, day = parts[2].str[:2].astype(int), parts[2].str[2:].astype(int)
-            year = parts[0].astype(int) + (month < 9)
-            frame['Date'] = pd.to_datetime(dict(year=year, month=month, day=day)).dt.strftime('%Y-%m-%d')
-            frame['season'] = table.replace('odds_', '')
-            odds.append(frame[['Date', 'Home', 'ML_Home', 'ML_Away', 'season']])
-    odds = pd.concat(odds)
+        odds = pd.concat([pd.read_sql_query(f'select Date, Home, ML_Home, ML_Away from "{table}"', con)
+                          for table in tables])
     for col in ['ML_Home', 'ML_Away']:
         odds[col] = pd.to_numeric(odds[col], errors='coerce')
-    merged = data.drop_duplicates(['Date', 'TEAM_NAME']).merge(
-        odds, left_on=['Date', 'TEAM_NAME'], right_on=['Date', 'Home'])
+    odds['Date'] = odds['Date'].astype(str).str[:10]
+    odds['Home'] = odds['Home'].map(normalize_team_name)
+    data['Home'] = data['TEAM_NAME'].map(normalize_team_name)
+    merged = data.drop_duplicates(['Date', 'Home']).merge(odds.drop_duplicates(['Date', 'Home']), on=['Date', 'Home'])
+    dates = pd.to_datetime(merged['Date'])
+    merged['season'] = np.where(dates.dt.month >= 9, dates.dt.year, dates.dt.year - 1)
     valid = (merged.ML_Home.abs() >= 100) & (merged.ML_Away.abs() >= 100)
-    return merged[valid].reset_index(drop=True)
+    return merged[valid].sort_values('Date').reset_index(drop=True)
 
 
 def main():
     games = load()
     features = [c for c in games.columns if c not in NON_FEATURES + ['Home', 'ML_Home', 'ML_Away', 'season']]
+    assert len(features) == 106, features
     home_won = games['Home-Team-Win'].astype(int)
     dec_home = games.ML_Home.map(american_to_decimal)
     dec_away = games.ML_Away.map(american_to_decimal)
@@ -56,9 +57,10 @@ def main():
           f"{'ORTA+ bahis':>11} {'Getiri':>7} | {'GÜÇLÜ bahis':>11} {'Getiri':>7}")
     totals = {GOOD_EV: [], STRONG_EV: []}
     for season in sorted(s for s in games.season.unique() if s >= FIRST_TEST_SEASON):
+        label = f"{season}-{str(season + 1)[-2:]}"
         train, test = games.season < season, games.season == season
-        model = xgb.train({'max_depth': 2, 'eta': 0.01, 'objective': 'binary:logistic', 'seed': 1},
-                          xgb.DMatrix(games.loc[train, features].values.astype(float), label=home_won[train]), 500)
+        model = xgb.train(PARAMS, xgb.DMatrix(games.loc[train, features].values.astype(float),
+                                              label=home_won[train]), ROUNDS)
         model_prob = model.predict(xgb.DMatrix(games.loc[test, features].values.astype(float)))
         fair = MODEL_WEIGHT * model_prob + (1 - MODEL_WEIGHT) * market[test]
         won = home_won[test]
@@ -70,7 +72,7 @@ def main():
                                      np.where(won[bet_away] == 0, dec_away[test][bet_away] - 1, -1)])
             totals[threshold].append(profit)
             cells.append(f"{len(profit):>11} {profit.mean() * 100:>+6.1f}%")
-        print(f"{season:8} {test.sum():>5} {((model_prob > .5) == won).mean() * 100:>12.1f}% "
+        print(f"{label:8} {test.sum():>5} {((model_prob > .5) == won).mean() * 100:>12.1f}% "
               f"{((market[test] > .5) == won).mean() * 100:>13.1f}% | {cells[0]} | {cells[1]}")
     cells = [f"{len(np.concatenate(p)):>11} {np.concatenate(p).mean() * 100:>+6.1f}%" for p in totals.values()]
     print(f"{'TOPLAM':8} {'':>5} {'':>13} {'':>14} | {cells[0]} | {cells[1]}")

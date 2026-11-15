@@ -81,7 +81,7 @@
                   {% for b in g.bets %}{% if b.selection == team ~ ' kazanır' %}{% set ns.bet = b %}{% endif %}{% endfor %}
                   <td class="num">{% if ns.bet %}{{ '%.2f'|format(ns.bet.decimal_odds) }} · <span class="{{ 'pos' if ns.bet.ev_pct > 0 else 'neg' }}">{{ '%+.0f'|format(ns.bet.ev_pct) }}</span>{% else %}<span class="dim">oran yok</span>{% endif %}</td>
                 {% endfor %}
-                <td>{% if g.ou_pick %}{{ g.ou_pick }} {{ g.total }} <span class="dim">(güven %{{ '%.0f'|format(g.ou_confidence * 100) }}{{ ', zayıf' if g.ou_confidence < 0.8 }})</span>{% else %}<span class="dim">-</span>{% endif %}</td>
+                <td>{% if g.ou_pick %}{{ g.ou_pick }} {{ g.total }} <span class="dim">(güven %{{ '%.0f'|format(g.ou_confidence * 100) }})</span>{% else %}<span class="dim">-</span>{% endif %}</td>
               </tr>
             {% endfor %}
             </tbody>
@@ -94,7 +94,7 @@
       <div class="card dim" style="white-space:normal">
         <ul>
           <li><b>Oran</b>: ondalık oran (parantez içinde Amerikan oranı). 2.10 = 100 yatır, kazanırsan 210 al.</li>
-          <li><b>Kazanma ihtimali</b>: bahsin tutma olasılığı (model ile bahis şirketi görüşünün ortalaması).</li>
+          <li><b>Kazanma ihtimali</b>: bahsin tutma olasılığı (model ile bahis şirketi görüşünün harmanı).</li>
           <li><b>Beklenen kâr / 100</b>: bu bahsi çok kez oynasan 100 birim başına ortalama kazancın. Eksi olan bahis uzun vadede kaybettirir.</li>
           <li><b>Öneri</b>: ★★★ GÜÇLÜ = beklenen kâr en az %15, ★★ ORTA = en az %7. Daha düşükler önerilmez.</li>
           <li><b>Yatır</b>: kasana göre önerilen tutar (çeyrek Kelly, tek bahiste kasanın en fazla %3'ü).</li>

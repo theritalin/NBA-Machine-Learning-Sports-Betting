@@ -68,7 +68,7 @@ def print_report(analysis, model_name, sportsbook, bankroll):
     print(Style.DIM + f"""
   Nasıl okunur?
   • Oran            : ondalık oran (parantez içinde Amerikan oranı). 2.10 = 100 yatır, kazanırsan 210 al.
-  • Kazanma         : bahsin tutma ihtimali (model + bahis şirketi görüşünün ortalaması).
+  • Kazanma         : bahsin tutma ihtimali (model ile bahis şirketi görüşünün harmanı).
   • Beklenen kâr/100: bu bahsi çok kez oynasan 100 birim başına ortalama kazancın. Eksi ise uzun vadede kaybettirir.
   • Öneri           : ★★★ GÜÇLÜ = beklenen kâr ≥ %{STRONG_EV * 100:.0f}, ★★ ORTA = ≥ %{GOOD_EV * 100:.0f}. Altındakiler listelenmez (PAS).
   • Yatır           : çeyrek Kelly ile önerilen tutar (kasanın en fazla %{MAX_STAKE_FRACTION * 100:.0f}'ü).

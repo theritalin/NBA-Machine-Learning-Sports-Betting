@@ -1,68 +1,169 @@
+import argparse
 import os
 import random
 import sqlite3
-import time
 import sys
-from datetime import date, datetime, timedelta
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
 
-from tqdm import tqdm
+import pandas as pd
+import toml
 
-sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from Utils.tools import get_json_data, to_data_frame
+BASE_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(1, os.fspath(BASE_DIR))
 
-url = 'https://stats.nba.com/stats/' \
-      'leaguedashteamstats?Conference=&' \
-      'DateFrom=10%2F01%2F{2}&DateTo={0}%2F{1}%2F{3}' \
-      '&Division=&GameScope=&GameSegment=&LastNGames=0&' \
-      'LeagueID=00&Location=&MeasureType=Base&Month=0&' \
-      'OpponentTeamID=0&Outcome=&PORound=0&PaceAdjust=N&' \
-      'PerMode=PerGame&Period=0&PlayerExperience=&' \
-      'PlayerPosition=&PlusMinus=N&Rank=N&' \
-      'Season={4}' \
-      '&SeasonSegment=&SeasonType=Regular+Season&ShotClockRange=&' \
-      'StarterBench=&TeamID=0&TwoWay=0&VsConference=&VsDivision='
+from src.Utils.tools import get_json_data, to_data_frame  # noqa: E402
 
-# year = [2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022]
-year = [2022, 2023]
-season = ["2022-23"]
-# season = ["2007-08", "2008-09", "2009-10", "2010-11", "2011-12", "2012-13", "2013-14", "2014-15", "2015-16", "2016-17",
-#           "2017-18", "2018-19", "2019-20", "2020-2021", "2021-2022"]
+CONFIG_PATH = BASE_DIR / "config.toml"
+DB_PATH = BASE_DIR / "Data" / "TeamData.sqlite"
+MIN_DELAY_SECONDS = 1
+MAX_DELAY_SECONDS = 3
+MAX_RETRIES = 3
 
-month = [10, 11, 12, 1, 2, 3, 4, 5, 6]
-days = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
 
-begin_year_pointer = year[0]
-end_year_pointer = year[0]
-count = 0
+def load_config():
+    return toml.load(CONFIG_PATH)
 
-con = sqlite3.connect("../../Data/teams.sqlite")
 
-for season1 in tqdm(season):
-    for month1 in tqdm(month):
-        if month1 == 1:
-            count += 1
-            end_year_pointer = year[count]
-        for day1 in tqdm(days):
-            if month1 == 10 and day1 < 19:
+def iter_dates(start_date, end_date):
+    date_pointer = start_date
+    while date_pointer <= end_date:
+        yield date_pointer
+        date_pointer += timedelta(days=1)
+
+
+def select_current_season(config, today):
+    for season_key, value in config["get-data"].items():
+        start_date = datetime.strptime(value["start_date"], "%Y-%m-%d").date()
+        end_date = datetime.strptime(value["end_date"], "%Y-%m-%d").date()
+        if start_date <= today <= end_date:
+            return season_key, value, start_date, end_date
+    return None, None, None, None
+
+
+def get_table_dates(con):
+    table_dates = []
+    cursor = con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    for (name,) in cursor.fetchall():
+        try:
+            table_dates.append(datetime.strptime(name, "%Y-%m-%d").date())
+        except ValueError:
+            continue
+    return table_dates
+
+
+def fetch_data(url, date_pointer, start_year, season_key):
+    for attempt in range(1, MAX_RETRIES + 1):
+        raw_data = get_json_data(
+            url.format(date_pointer.month, date_pointer.day, start_year, date_pointer.year, season_key)
+        )
+        df = to_data_frame(raw_data)
+        if not df.empty:
+            return df
+        if attempt < MAX_RETRIES:
+            time.sleep(MIN_DELAY_SECONDS + random.random() * (MAX_DELAY_SECONDS - MIN_DELAY_SECONDS))
+    return pd.DataFrame(data={})
+
+
+def backfill_season(con, url, season_key, value, existing_dates, today):
+    start_date = datetime.strptime(value["start_date"], "%Y-%m-%d").date()
+    end_date = datetime.strptime(value["end_date"], "%Y-%m-%d").date()
+    fetch_end = min(today - timedelta(days=1), end_date)
+    missing_dates = [
+        date_pointer
+        for date_pointer in iter_dates(start_date, fetch_end)
+        if date_pointer not in existing_dates
+    ]
+
+    if not missing_dates:
+        print(f"No missing dates for season {season_key}.")
+        return
+
+    print(f"Backfilling {len(missing_dates)} dates for season {season_key}.")
+    for date_pointer in missing_dates:
+        print("Getting data:", date_pointer)
+        df = fetch_data(url, date_pointer, value["start_year"], season_key)
+        if df.empty:
+            print("No data returned for:", date_pointer)
+            continue
+
+        table_name = date_pointer.strftime("%Y-%m-%d")
+        df["Date"] = table_name
+        df.to_sql(table_name, con, if_exists="replace", index=False)
+        existing_dates.add(date_pointer)
+
+        time.sleep(random.randint(MIN_DELAY_SECONDS, MAX_DELAY_SECONDS))
+
+        # TODO: Add tests
+
+
+def main(config=None, db_path=DB_PATH, today=None, backfill=False, season=None):
+    if config is None:
+        config = load_config()
+    url = config["data_url"]
+    if today is None:
+        today = datetime.today().date()
+
+    with sqlite3.connect(db_path) as con:
+        existing_dates = set(get_table_dates(con))
+        if backfill:
+            season_items = config["get-data"].items()
+            if season:
+                season_items = [
+                    (key, value) for key, value in season_items if key == season
+                ]
+                if not season_items:
+                    print("Season not found in config:", season)
+                    return
+
+            for season_key, value in season_items:
+                backfill_season(con, url, season_key, value, existing_dates, today)
+            return
+
+        season_key, value, start_date, end_date = select_current_season(config, today)
+        if not season_key:
+            print("No current season found for today:", today)
+            return
+
+        fetch_end = min(today, end_date)
+        season_dates = [
+            date_value for date_value in existing_dates
+            if start_date <= date_value <= fetch_end
+        ]
+        latest_date = max(season_dates) if season_dates else None
+        fetch_start = start_date if latest_date is None else latest_date + timedelta(days=1)
+
+        if fetch_start > fetch_end:
+            print("No new dates to fetch. Latest date:", latest_date)
+            return
+
+        for date_pointer in iter_dates(fetch_start, fetch_end):
+            print("Getting data:", date_pointer)
+            df = fetch_data(url, date_pointer, value["start_year"], season_key)
+            if df.empty:
+                print("No data returned for:", date_pointer)
                 continue
-            if month1 in [4,6,9,11] and day1 > 30:
-                continue
-            if month1 == 2 and day1 > 28:
-                continue
-            if end_year_pointer == datetime.now().year:
-                if month1 == datetime.now().month and day1 > datetime.now().day:
-                    continue
-                if month1 > datetime.now().month:
-                    continue
-            general_data = get_json_data(url.format(month1, day1, begin_year_pointer, end_year_pointer, season1))
-            general_df = to_data_frame(general_data)
-            real_date = date(year=end_year_pointer, month=month1, day=day1) + timedelta(days=1)
-            general_df['Date'] = str(real_date)
 
-            x = str(real_date).split('-')
-            general_df.to_sql(f"teams_{season1}-{str(int(x[1]))}-{str(int(x[2]))}", con, if_exists="replace")
-            
-            time.sleep(random.randint(1, 3))
-    begin_year_pointer = year[count]
+            table_name = date_pointer.strftime("%Y-%m-%d")
+            df["Date"] = table_name
+            df.to_sql(table_name, con, if_exists="replace", index=False)
 
-con.close()
+            time.sleep(random.randint(MIN_DELAY_SECONDS, MAX_DELAY_SECONDS))
+
+            # TODO: Add tests
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fetch NBA team stats data.")
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Fetch all missing dates for seasons in config.toml.",
+    )
+    parser.add_argument(
+        "--season",
+        help="Limit backfill to a single season key (e.g. 2025-26).",
+    )
+    args = parser.parse_args()
+    main(backfill=args.backfill, season=args.season)

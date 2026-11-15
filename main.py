@@ -1,19 +1,27 @@
 import argparse
 import json
 import sys
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
+import pandas as pd
 from colorama import Fore, Style, init
 
 from src.Predict import Recommender, Report
-from src.Utils.tools import (create_todays_games, create_todays_games_from_odds, get_json_data,
-                             get_todays_games_json, normalize_team_name, team_stats_url, to_data_frame)
+from src.Utils.tools import (create_todays_games_from_odds, current_season, get_json_data, get_todays_games,
+                             normalize_team_name, team_stats_url, to_data_frame)
 
 # The 52 per-team inputs the models were trained on, in training order (home team first, then away).
 BASE_STATS = ['GP', 'W', 'L', 'W_PCT', 'MIN', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A', 'FG3_PCT', 'FTM', 'FTA',
               'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'BLKA', 'PF', 'PFD', 'PTS', 'PLUS_MINUS']
 STAT_COLUMNS = BASE_STATS + [f"{stat}_RANK" for stat in BASE_STATS]
 MIN_GAMES_PLAYED = 10
+SCHEDULE_DIR = Path(__file__).resolve().parent / "Data"
+NBA_TIMEZONE = ZoneInfo("America/New_York")  # NBA game dates are US Eastern dates
+REST_DAYS_SEASON_START = 7
+REST_DAYS_UNKNOWN = 2
 
 
 def fail(message):
@@ -28,7 +36,7 @@ def warn(message):
 def fetch_games_and_odds(sportsbook):
     """Returns (games, odds_rows); odds_rows is None when odds must be typed in."""
     if not sportsbook:
-        return create_todays_games(get_todays_games_json()), None
+        return get_todays_games(), None
 
     from src.DataProviders.SbrOddsProvider import SbrOddsProvider
     odds = SbrOddsProvider(sportsbook=sportsbook).get_odds()
@@ -76,13 +84,32 @@ def build_features(games, stats):
     return np.array(features)
 
 
+def rest_days(games, season, today=None):
+    """Days since each team's previous game: one [home, away] pair per game."""
+    schedule_path = SCHEDULE_DIR / f"nba-{season[:4]}-UTC.csv"
+    if not schedule_path.exists():
+        warn(f"Uyarı: {schedule_path.name} fikstür dosyası yok; dinlenme günü {REST_DAYS_UNKNOWN} varsayıldı.")
+        return [[REST_DAYS_UNKNOWN, REST_DAYS_UNKNOWN] for _ in games]
+    schedule = pd.read_csv(schedule_path)
+    played_on = pd.to_datetime(schedule['Date'], format='%d/%m/%Y %H:%M').dt.tz_localize('UTC') \
+        .dt.tz_convert(NBA_TIMEZONE).dt.date
+    today = today or datetime.now(NBA_TIMEZONE).date()
+
+    def days_off(team):
+        dates = played_on[((schedule['Home Team'] == team) | (schedule['Away Team'] == team)) & (played_on < today)]
+        return (today - dates.max()).days if len(dates) else REST_DAYS_SEASON_START
+
+    return [[days_off(home), days_off(away)] for home, away in games]
+
+
 def main(args):
     init()
     games, odds_rows = fetch_games_and_odds(args.odds)
     if not games:
         fail("Bugün için maç bulunamadı." + (f" ({args.odds} henüz oran açmamış olabilir.)" if args.odds else ""))
 
-    stats = to_data_frame(get_json_data(team_stats_url(args.season)))
+    season = args.season or current_season()
+    stats = to_data_frame(get_json_data(team_stats_url(season)))
     if stats.empty:
         fail("Takım istatistikleri stats.nba.com'dan alınamadı (site erişimi engelliyor ya da sezon başlamadı).")
     known = set(stats['TEAM_NAME'].map(normalize_team_name))
@@ -98,6 +125,7 @@ def main(args):
 
     features = build_features(games, stats)
     totals = [row.get('total') for row in odds_rows]
+    rest = rest_days(games, season)
 
     runners = []
     if args.xgb or args.A or not args.nn:
@@ -110,8 +138,8 @@ def main(args):
     output = {}
     for name, runner in runners:
         try:
-            home_probs, over_probs = runner.predict(features, totals)
-        except RuntimeError as e:
+            home_probs, over_probs = runner.predict(features, totals, rest)
+        except (RuntimeError, FileNotFoundError) as e:
             warn(str(e))
             continue
         analysis = Recommender.analyze(games, home_probs, over_probs, odds_rows, args.kasa)

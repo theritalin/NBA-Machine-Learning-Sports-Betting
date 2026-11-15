@@ -1,24 +1,19 @@
 """Turns raw model probabilities + sportsbook odds into ranked bet recommendations.
 
-Thresholds come from a walk-forward backtest (train on past seasons, bet the next
-one, 2017-23, see backtest.py):
-  * The money line model alone is less accurate than the bookmaker (64% vs 67%),
-    so its probability is blended 50/50 with the bookmaker's no-vig probability.
-  * The over/under model is a coin flip unless it is very confident, so its
-    confidence is replaced by the hit rate actually measured for that confidence.
+In every honest test (see backtest.py and README) the bookmaker's odds predicted games
+better than the models did, so a model probability is never trusted on its own: it is
+blended with the bookmaker's no-vig probability, and a bet is only recommended when the
+blended probability still leaves a clear expected profit at the offered price.
 """
 from src.Utils.Expected_Value import (american_to_decimal, kelly_fraction, no_vig_probabilities,
                                       parse_american_odds)
 
-MODEL_WEIGHT = 0.5          # weight of the model vs. the market in the "fair" probability
+MODEL_WEIGHT = 0.3          # weight of the model vs. the market in the "fair" probability
 STRONG_EV = 0.15            # EV per unit staked needed for a GÜÇLÜ rating
 GOOD_EV = 0.07              # ... for an ORTA rating
 KELLY_MULTIPLIER = 0.25     # stake a quarter of full Kelly
 MAX_STAKE_FRACTION = 0.03   # never more than 3% of bankroll on one bet
 DEFAULT_TOTAL_PRICE = -110
-
-# (minimum model confidence, measured hit rate) for over/under picks
-OU_CALIBRATION = [(0.80, 0.60), (0.70, 0.545), (0.0, 0.50)]
 
 STRONG, GOOD, PASS = 'GÜÇLÜ', 'ORTA', 'PAS'
 
@@ -49,12 +44,6 @@ def _bet(game, kind, selection, odds, win_prob, model_prob, market_prob, bankrol
         'rating': rating,
         'stake': round(bankroll * stake_fraction, 2) if rating != PASS else 0.0,
     }
-
-
-def _calibrated_ou(confidence):
-    for threshold, hit_rate in OU_CALIBRATION:
-        if confidence >= threshold:
-            return hit_rate
 
 
 def analyze(games, home_probs, over_probs, odds_rows, bankroll=1000.0):
@@ -92,9 +81,13 @@ def analyze(games, home_probs, over_probs, odds_rows, bankroll=1000.0):
             confidence = max(over_prob, 1 - over_prob)
             game['ou_pick'] = 'ÜST' if over else 'ALT'
             game['ou_confidence'] = round(confidence, 4)
-            price = parse_american_odds(row.get('over_price' if over else 'under_price')) or DEFAULT_TOTAL_PRICE
-            game['bets'].append(_bet(game, 'Alt/Üst', f"{game['ou_pick']} {game['total']}", price,
-                                     _calibrated_ou(confidence), confidence, None, bankroll))
+            over_price = parse_american_odds(row.get('over_price')) or DEFAULT_TOTAL_PRICE
+            under_price = parse_american_odds(row.get('under_price')) or DEFAULT_TOTAL_PRICE
+            market_over, market_under = no_vig_probabilities(over_price, under_price)
+            market = market_over if over else market_under
+            fair = MODEL_WEIGHT * confidence + (1 - MODEL_WEIGHT) * market
+            game['bets'].append(_bet(game, 'Alt/Üst', f"{game['ou_pick']} {game['total']}",
+                                     over_price if over else under_price, fair, confidence, market, bankroll))
         results.append(game)
     return results
 
