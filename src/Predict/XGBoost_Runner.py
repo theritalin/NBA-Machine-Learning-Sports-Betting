@@ -101,26 +101,51 @@ def _load(kind):
                 probs = np.column_stack([1 - probs, probs])
             return probs
 
+        predict_probs.num_features = booster.num_features()
         _models[kind] = predict_probs
     return _models[kind]
 
 
-def predict(features, totals, rest_days):
+def _with_extra(kind, base, extra):
+    """Appends the Elo/form columns when (and only when) the model was trained with them.
+
+    base: the old-layout matrix (ML: stats + rest; UO: stats + OU + rest). The model decides:
+    it expects either base.shape[1] columns (extra is ignored) or base + extra columns.
+    Anything else is an error: silently feeding wrong columns would give wrong probabilities.
+    """
+    expected = _load(kind).num_features
+    old_width = base.shape[1]
+    if expected == old_width:
+        return base
+    extra_width = 0 if extra is None else extra.shape[1]
+    if extra is not None and extra_width and expected == old_width + extra_width:
+        return np.column_stack([base, extra])
+    raise RuntimeError(
+        f"{kind} modeli {expected} özellik bekliyor; verilen {old_width} sütun"
+        + (f" + {extra_width} Elo/form sütunu" if extra is not None else " (Elo/form sütunları verilmedi)")
+        + " bu sayıya uymuyor. Model ile veri seti sürümü uyuşmuyor; modeli ya da özellikleri güncelleyin.")
+
+
+def predict(features, totals, rest_days, extra=None):
     """features: (n_games, 104) team stats, home then away. totals: O/U line per game or None.
     rest_days: (n_games, 2) days of rest for home and away.
+    extra: optional (n_games, len(Game_Features.FEATURE_COLUMNS)) Elo/form columns; used only by models
+    trained with them (ignored by older models).
 
     Returns (home_win_probs, over_probs); over_probs[i] is None when there is no line.
     """
     features = np.asarray(features, dtype=float)
     rest_days = np.asarray(rest_days, dtype=float)
-    ml_probs = _load("ML")(np.column_stack([features, rest_days]))
+    extra = None if extra is None else np.asarray(extra, dtype=float).reshape(len(features), -1)
+    ml_probs = _load("ML")(_with_extra("ML", np.column_stack([features, rest_days]), extra))
     home_probs = [float(p[1]) for p in ml_probs]
 
     over_probs = [None] * len(features)
     rows = [i for i, total in enumerate(totals) if total is not None]
     if rows:
-        # training column order: team stats, OU line, rest days. Classes: 0 under, 1 over (old models: 2 push).
-        uo_features = np.column_stack([features[rows], [float(totals[i]) for i in rows], rest_days[rows]])
+        # training column order: team stats, OU line, rest days, (Elo/form). Classes: 0 under, 1 over (old models: 2 push).
+        uo_base = np.column_stack([features[rows], [float(totals[i]) for i in rows], rest_days[rows]])
+        uo_features = _with_extra("UO", uo_base, None if extra is None else extra[rows])
         for i, p in zip(rows, _load("UO")(uo_features)):
             over_probs[i] = float(p[1] / (p[0] + p[1]))
     return home_probs, over_probs

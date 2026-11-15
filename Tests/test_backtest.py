@@ -100,6 +100,17 @@ class TestBootstrap(unittest.TestCase):
         self.assertAlmostEqual(ci['point'], 0.5)
         self.assertAlmostEqual(ci['low'], 0.5)
 
+    def test_four_seasons_with_intermediate_values_resample_across_seasons(self):
+        # Per-season ratios .1 .3 .5 .7. A real season-block bootstrap mixes seasons, so its 95% interval is
+        # strictly inside [.1, .7] (all four draws equal has probability 1/256 < 2.5%). A bug that collapses
+        # every resample to a single season would reach .1 and .7 exactly.
+        ci = backtest.bootstrap_ratio_ci([1, 3, 5, 7], [10, 10, 10, 10])
+        self.assertAlmostEqual(ci['point'], 0.4)
+        self.assertGreater(ci['low'], 0.1 + 0.02)
+        self.assertLess(ci['high'], 0.7 - 0.02)
+        self.assertLess(ci['low'], ci['point'])
+        self.assertGreater(ci['high'], ci['point'])
+
     def test_at_least_2000_reps_by_default(self):
         self.assertGreaterEqual(backtest.BOOTSTRAP_REPS, 2000)
 
@@ -151,6 +162,36 @@ class TestFeatures(unittest.TestCase):
         self.assertEqual(backtest.select_features(df.dtypes), ['W_PCT', 'NEW_ELO', 'Days-Rest-Home'])
         self.assertEqual(backtest.select_features(df.dtypes, include_ou=True),
                          ['OU', 'W_PCT', 'NEW_ELO', 'Days-Rest-Home'])
+
+
+class TestDropFeaturesAndFewBets(unittest.TestCase):
+    def test_drop_pattern_removes_only_matching_features(self):
+        df = pd.DataFrame({'W_PCT': [0.5], 'Elo-Home': [1500.0], 'Form10-Margin-Home': [1.0],
+                           'HomeSplit-Margin-Home': [1.0], 'B2B-Away': [0.0], 'Days-Rest-Home': [2.0],
+                           'Score': [200.0]})
+        pattern = '^(Elo|Form|HomeSplit|AwaySplit|Games7|B2B)'
+        self.assertEqual(backtest.select_features(df.dtypes, drop_pattern=pattern), ['W_PCT', 'Days-Rest-Home'])
+        self.assertEqual(len(backtest.select_features(df.dtypes)), 6)
+
+    def test_ci_needs_at_least_30_bets(self):
+        few = [np.array([1.0, -1.0] * 7)]  # 14 bets
+        self.assertIsNone(backtest.ci_or_none(few, 14))
+        enough = [np.array([1.0, -1.0] * 8), np.array([1.0, -1.0] * 8)]  # 32 bets
+        self.assertIsNotNone(backtest.ci_or_none(enough, 32))
+        self.assertIsNotNone(backtest.ci_or_none(enough, backtest.MIN_BETS_FOR_CI))
+        self.assertIsNone(backtest.ci_or_none(enough, backtest.MIN_BETS_FOR_CI - 1))
+
+    def test_few_bets_print_says_insufficient_and_json_is_null(self):
+        import contextlib
+        import io
+        result = {'satirlar': [], 'toplam': {'mac': 0, 'bahis': 5, 'guven_araligi': {'getiri': None}}}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            backtest.print_totals(result)
+        text = out.getvalue()
+        self.assertIn('yetersiz bahis', text)
+        self.assertNotIn('%95 GA', text)
+        self.assertIsNone(json.loads(json.dumps(backtest._clean(result)))['toplam']['guven_araligi']['getiri'])
 
 
 if __name__ == '__main__':

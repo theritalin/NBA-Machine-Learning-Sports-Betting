@@ -10,6 +10,7 @@ import pandas as pd
 from colorama import Fore, Style, init
 
 from src.Predict import Recommender, Report
+from src.Utils.Game_Features import GameFeatureBuilder, feature_vector, latest_game_date, load_game_history
 from src.Utils.tools import (create_todays_games_from_odds, current_season, get_json_data, get_todays_games,
                              normalize_team_name, team_stats_url, to_data_frame)
 
@@ -19,6 +20,8 @@ BASE_STATS = ['GP', 'W', 'L', 'W_PCT', 'MIN', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'F
 STAT_COLUMNS = BASE_STATS + [f"{stat}_RANK" for stat in BASE_STATS]
 MIN_GAMES_PLAYED = 10
 SCHEDULE_DIR = Path(__file__).resolve().parent / "Data"
+ODDS_DB_PATH = SCHEDULE_DIR / "OddsData.sqlite"
+STALE_HISTORY_DAYS = 3
 NBA_TIMEZONE = ZoneInfo("America/New_York")  # NBA game dates are US Eastern dates
 REST_DAYS_SEASON_START = 7
 REST_DAYS_UNKNOWN = 2
@@ -102,6 +105,33 @@ def rest_days(games, season, today=None):
     return [[days_off(home), days_off(away)] for home, away in games]
 
 
+def elo_features(games, season, today=None):
+    """Elo/form columns (len(FEATURE_COLUMNS) per game) from the same history and builder the training
+    set was built with, or None when the history cannot be loaded. Warns (stderr) about stale results
+    and team names the history has never seen."""
+    today = today or datetime.now(NBA_TIMEZONE).date()
+    start_year = int(season[:4])
+    csv_paths = [SCHEDULE_DIR / f"nba-{year}-UTC.csv" for year in (start_year - 1, start_year)]
+    try:
+        history = load_game_history(ODDS_DB_PATH, csv_paths)
+    except Exception as e:  # missing/corrupt database: predict without the new features rather than crash
+        warn(f"Uyarı: Elo/form geçmişi yüklenemedi ({type(e).__name__}: {e}); bu özellikleri kullanan modeller çalışmaz.")
+        return None
+    last = latest_game_date(history)
+    if last is None or (today - last).days > STALE_HISTORY_DAYS:
+        warn(f"Uyarı: Elo/form verisi {last or 'hiç'} tarihinde bitiyor; bugün {today}. Elo ve son-form değerleri "
+             f"eski kalır, tahminler zayıflar. Data/OddsData.sqlite'ı ve Data/nba-{start_year}-UTC.csv "
+             "dosyasındaki sonuçları (Result sütunu) güncelleyin.")
+    builder = GameFeatureBuilder()
+    for _ in builder.replay(history):
+        pass
+    for home, away in games:
+        for team in (home, away):
+            if not builder.known(team):
+                warn(f"Uyarı: {team} Elo/form geçmişinde yok (yazım farkı olabilir); Elo 1500 ile başlatıldı.")
+    return np.array([feature_vector(builder.features_for(today, home, away)) for home, away in games], dtype=float)
+
+
 def main(args):
     init()
     games, odds_rows = fetch_games_and_odds(args.odds)
@@ -126,6 +156,7 @@ def main(args):
     features = build_features(games, stats)
     totals = [row.get('total') for row in odds_rows]
     rest = rest_days(games, season)
+    extra = elo_features(games, season)
 
     runners = []
     if args.xgb or args.A or not args.nn:
@@ -138,7 +169,7 @@ def main(args):
     output = {}
     for name, runner in runners:
         try:
-            home_probs, over_probs = runner.predict(features, totals, rest)
+            home_probs, over_probs = runner.predict(features, totals, rest, extra)
         except (RuntimeError, FileNotFoundError) as e:
             warn(str(e))
             continue

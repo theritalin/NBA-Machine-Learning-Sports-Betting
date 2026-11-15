@@ -38,15 +38,21 @@ python3 main.py -odds=fanduel -kasa 1000
 
 Kısa cevap: **model bahis şirketini yenemiyor; öneriler kanıtlanmış bir kazanç yöntemi değil.**
 
-- Kullanılan maç sonucu modeli, hiç görmediği 1.700 maçta (Kasım 2024 – Ocak 2026) **%65,8** isabet etti;
-  aynı maçlarda bahis şirketinin favorisi **%68,2** kazandı. Bu dönemde önerilen bahisler sabit tutarla
-  oynansaydı yatırılan paranın %2-5'i kaybedilirdi (kabaca bahis şirketinin komisyonu kadar).
+- Kullanılan maç sonucu modeli (maç skorlarından türetilen Elo ve son-form özellikleriyle), hiç görmediği
+  1.697 maçta (Kasım 2024 – Ocak 2026) **%65,7** isabet etti, kalibre log-loss'u 0,6185 (özelliksiz önceki
+  model 0,6207); aynı dönemde bahis şirketinin favorisi **%68,2** kazandı ve onun log-loss'u 0,5941.
+  Yani model piyasanın hâlâ gerisinde.
 - `python3 backtest.py` aynı stratejiyi 9 sezonda sınar (her sezon yalnızca önceki sezonlarla eğitilir,
-  11.311 maç): toplam getiri +%1, ama sezonlara göre −%14 ile +%26 arasında; 9 sezonun 5'i zararda.
-  Yani sonuç şanstan ayırt edilemiyor: sezon bloklu bootstrap ile %95 güven aralığı 0'ı içeriyor.
+  10.311 maç): ORTA+ bahislerin toplam getirisi −%3,7 (%95 güven aralığı −%11,5 ile +%5,9), GÜÇLÜ −%2,5;
+  sezonlara göre ORTA+ −%23,4 ile +%17,8 arasında, 9 sezonun 5'i zararda. Yani sonuç şanstan ayırt
+  edilemiyor. Olasılık kalitesi: modelin log-loss'u 0,6260, piyasanın 0,6020 (fark +0,0240, %95 güven
+  aralığı +0,0199 ile +0,0275: model piyasadan anlamlı biçimde kötü). Elo/form özellikleri
+  `--drop-features '^(Elo|Form|HomeSplit|AwaySplit|Games7|B2B)'` ile çıkarılınca aynı tarifle model
+  log-loss'u 0,6325 (fark +0,0305; eski varsayılan tarifle 0,6305), yani özellikler olasılığı biraz iyileştiriyor
+  ama piyasayı yakalamaya yetmiyor.
   Aynı komut log-loss/Brier'ı piyasayla karşılaştırır ve alt/üst backtest'ini de koşar
-  (`--json YOL`, `--seasons N`, `--first-season YIL` seçenekleri var).
-- Alt/üst modeli yazı-turadan farksız (%50,4). Güveni neredeyse hep %50-52 olduğu için alt/üst bahsi
+  (`--json YOL`, `--seasons N`, `--first-season YIL`, `--drop-features REGEX` seçenekleri var).
+- Alt/üst modeli yazı-turadan farksız (bekletmede %49,2, backtest'te %50,0). Güveni neredeyse hep %50-52 olduğu için alt/üst bahsi
   pratikte hiç önerilmez.
 - Bu yüzden modelin olasılığı tek başına kullanılmaz; bahis şirketinin (komisyonu çıkarılmış) olasılığıyla
   %30 model / %70 piyasa oranında harmanlanır.
@@ -74,6 +80,13 @@ PYTHONPATH=. python3 src/Process-Data/Create_Games.py    # eğitim veri setini o
 python3 src/Train-Models/XGBoost_Model_ML.py --trials 60
 python3 src/Train-Models/XGBoost_Model_UO.py --trials 40
 ```
+
+Maç sonucu modeli ayrıca maç skorlarından türetilen 16 özellik kullanır (Elo, son 10/5 maç farkı, son 10 maç
+galibiyet oranı, evde/deplasmanda sezon ortalaması, son 7 günde oynanan maç, dünkü maç): `Create_Games.py`
+bunları veri setinin sonuna ekler, `main.py` aynı kodla (`src/Utils/Game_Features.py`) canlı hesaplar. Canlı
+tahminde geçmiş `Data/OddsData.sqlite` + `Data/nba-<yıl>-UTC.csv` içindeki `Result` sütunundan okunur;
+sonuçlar 3 günden eskiyse `main.py` uyarı basar. Bu özellikleri beklemeyen eski modeller (106 girdi) çalışmaya
+devam eder. Karşılaştırma için: `python3 backtest.py --drop-features '^(Elo|Form|HomeSplit|AwaySplit|Games7|B2B)'`.
 
 Eğitim hedefi isabet değil olasılık kalitesidir (log-loss). İki hedef de `binary:logistic` ile eğitilir
 (alt/üstte push maçları atılır); arama zaman sıralı çapraz doğrulamayla yapılır, erken durdurma her katın

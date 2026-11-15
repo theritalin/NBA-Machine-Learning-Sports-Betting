@@ -42,8 +42,8 @@ def _normalize(data):
     return data / np.where(norms == 0, 1, norms)
 
 
-def predict(features, totals, rest_days):
-    """Same contract as XGBoost_Runner.predict."""
+def predict(features, totals, rest_days, extra=None):
+    """Same contract as XGBoost_Runner.predict; `extra` (Elo/form columns) is accepted and ignored."""
     features = np.asarray(features, dtype=float)
     rest_days = np.asarray(rest_days, dtype=float)
     ml_preds = _load("Trained-Model-ML-").predict(_normalize(np.column_stack([features, rest_days])), verbose=0)
