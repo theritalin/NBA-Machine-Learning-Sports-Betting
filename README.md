@@ -75,6 +75,13 @@ python3 src/Train-Models/XGBoost_Model_ML.py --trials 60
 python3 src/Train-Models/XGBoost_Model_UO.py --trials 40
 ```
 
+Eğitim hedefi isabet değil olasılık kalitesidir (log-loss). İki hedef de `binary:logistic` ile eğitilir
+(alt/üstte push maçları atılır); arama zaman sıralı çapraz doğrulamayla yapılır, erken durdurma her katın
+eğitim kısmının son %10'unda, skor ayrılmış doğrulama katında ölçülür. Kalibrasyon kat-dışı tahminlerden
+öğrenilir; son %10 bekletme kümesinde ölçülür. Varsayılan olarak yayın modeli tüm veride yeniden eğitilir
+(`--no-refit` ilk %90'lık modeli kaydeder). Çıktılar: `XGBoost_<bekletme isabeti>%_<ML|UO>_<YYYYMMDD>.json`
+ile yanında `_calibration.json` ve `_meta.json` (bekletme metrikleri, parametreler, tur sayısı).
+
 Sezon tarihleri `config.toml` içindedir. Tahmin sırasında `Models/XGBoost_Models` içindeki en yeni model
 kendiliğinden seçilir. Dinlenme günü hesabı için `Data/nba-<yıl>-UTC.csv` fikstür dosyası kullanılır.
 
