@@ -166,6 +166,8 @@ def main():
                 game = build_game_features(team_df, row.Home, row.Away, index_map)
                 if game is None:
                     continue
+                # the stats table may be dated a day before the game; record the game date
+                game["Date"] = game["Date.1"] = date_str
 
                 scores.append(row.Points)
                 ou_values.append(row.OU)
