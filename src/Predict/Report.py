@@ -72,5 +72,7 @@ def print_report(analysis, model_name, sportsbook, bankroll):
   • Beklenen kâr/100: bu bahsi çok kez oynasan 100 birim başına ortalama kazancın. Eksi ise uzun vadede kaybettirir.
   • Öneri           : ★★★ GÜÇLÜ = beklenen kâr ≥ %{STRONG_EV * 100:.0f}, ★★ ORTA = ≥ %{GOOD_EV * 100:.0f}. Altındakiler listelenmez (PAS).
   • Yatır           : çeyrek Kelly ile önerilen tutar (kasanın en fazla %{MAX_STAKE_FRACTION * 100:.0f}'ü).
-  Dikkat: Yüksek oranlı (sürpriz) bahisler çoğu zaman kaybeder; kâr uzun vadede ve küçük tutarlarla oluşur.
-  Model sakatlık/kadro bilgisini bilmez; oynamadan önce kontrol et. Hiçbir öneri garanti değildir.""" + Style.RESET_ALL)
+""" + Style.RESET_ALL + Fore.YELLOW + """
+  DİKKAT: Geçmiş testlerde bahis şirketinin oranları maçları modelden daha iyi tahmin etti ve bu öneriler
+  uzun vadede kâr ettirmedi (bkz. README). Listeyi "modele göre en az kötü bahisler" olarak oku, garanti olarak değil.
+  Model sakatlık/kadro bilgisini bilmez; oynamadan önce kontrol et.""" + Style.RESET_ALL)

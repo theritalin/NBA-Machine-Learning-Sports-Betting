@@ -31,7 +31,7 @@ class BoosterWrapper(ClassifierMixin, BaseEstimator):
 
 
 def _select_model_path(kind):
-    candidates = list(MODEL_DIR.glob(f"*_{kind}_*.json"))
+    candidates = [path for path in MODEL_DIR.glob(f"*_{kind}_*.json") if not path.stem.endswith("_calibration")]
     if not candidates:
         raise FileNotFoundError(f"No XGBoost {kind} model found in {MODEL_DIR}")
 
