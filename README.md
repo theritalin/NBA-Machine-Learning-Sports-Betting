@@ -20,7 +20,7 @@ python3 main.py -odds=fanduel -kasa 1000
 |---|---|
 | `-odds=fanduel` | Oranlar otomatik çekilir (fanduel, draftkings, betmgm, pointsbet, caesars, wynn, bet_rivers_ny). Verilmezse oranları elle girersiniz; ondalık (1.85) ya da Amerikan (-118) yazabilirsiniz. |
 | `-kasa 1000` | Toplam bahis bütçeniz. "Yatır" sütunu buna göre hesaplanır. |
-| `-xgb` / `-nn` / `-A` | XGBoost (varsayılan) / sinir ağı / ikisi birden. Sinir ağı için TensorFlow gerekir. |
+| `-xgb` / `-nn` / `-A` | XGBoost (varsayılan) / sinir ağı / ikisi birden. Sinir ağı için TensorFlow gerekir (ayrıca kurulur). |
 | `-season 2026-27` | Sezonu elle seçmek için (varsayılan: içinde bulunulan sezon). |
 | `-json` | Sonuçları JSON olarak verir. |
 
@@ -36,18 +36,21 @@ python3 main.py -odds=fanduel -kasa 1000
 
 ## Ne kadar güvenilir?
 
-`python3 backtest.py` modeli geçmiş sezonlarda dürüst biçimde sınar (yalnızca önceki sezonlarla eğitip
-sonraki sezonda bahis oynar, 2017-23, 6.679 maç):
+Kısa cevap: **model bahis şirketini yenemiyor; öneriler kanıtlanmış bir kazanç yöntemi değil.**
 
-- Model tek başına bahis şirketinden **daha az** isabetli (%64'e karşı %67). Bu yüzden öneriler modelin
-  olasılığı ile bahis şirketinin (komisyonu çıkarılmış) olasılığının ortalamasına dayanır.
-- Önerilen maç sonucu bahislerinin getirisi 6 sezonda toplam **+%1 ile +%4** arasında; sezonlara göre
-  −%11 ile +%20 arasında oynuyor. Yani küçük ve garantisi olmayan bir avantaj.
-- Alt/üst modeli yazı-turadan farksız; yalnızca güveni %70'in üzerindeyken az da olsa tutuyor
-  (%70-80 güvende %54,5, %80 üstünde %60 isabet). Bu yüzden alt/üst bahsi yalnızca güven ≥ %80 iken önerilir.
-- Model sakatlık, kadro, dinlenme günü gibi bilgileri bilmez ve 2022-23 sezonuna kadarki veriyle eğitilmiştir.
+- Kullanılan maç sonucu modeli, hiç görmediği 1.700 maçta (Kasım 2024 – Ocak 2026) **%65,8** isabet etti;
+  aynı maçlarda bahis şirketinin favorisi **%68,2** kazandı. Bu dönemde önerilen bahisler sabit tutarla
+  oynansaydı yatırılan paranın %2-5'i kaybedilirdi (kabaca bahis şirketinin komisyonu kadar).
+- `python3 backtest.py` aynı stratejiyi 9 sezonda sınar (her sezon yalnızca önceki sezonlarla eğitilir,
+  11.311 maç): toplam getiri +%1, ama sezonlara göre −%14 ile +%26 arasında; 9 sezonun 5'i zararda.
+  Yani sonuç şanstan ayırt edilemiyor.
+- Alt/üst modeli yazı-turadan farksız (%50,4). Güveni neredeyse hep %50-52 olduğu için alt/üst bahsi
+  pratikte hiç önerilmez.
+- Bu yüzden modelin olasılığı tek başına kullanılmaz; bahis şirketinin (komisyonu çıkarılmış) olasılığıyla
+  %30 model / %70 piyasa oranında harmanlanır.
+- Model sakatlık ve kadro bilgisini bilmez.
 
-Kaybetmeyi göze alamayacağınız parayla oynamayın.
+Listeyi "modele göre en az kötü bahisler" olarak okuyun. Kaybetmeyi göze alamayacağınız parayla oynamayın.
 
 ## Web arayüzü
 
@@ -60,17 +63,34 @@ Aynı tabloyu tarayıcıda üç bahis sitesi için gösterir; kasa tutarını sa
 
 ## Yeni veri ve model eğitimi
 
+Proje kökünden çalıştırın:
+
 ```bash
-cd src/Process-Data
-python -m Get_Data        # sezon/yıl dosyanın başında elle ayarlanır
-python -m Create_Games
-cd ../Train-Models
-python -m XGBoost_Model_ML
-python -m XGBoost_Model_UO
+PYTHONPATH=. python3 src/Process-Data/Get_Data.py        # günlük takım istatistikleri
+PYTHONPATH=. python3 src/Process-Data/Get_Odds_Data.py   # oranlar ve skorlar
+PYTHONPATH=. python3 src/Process-Data/Create_Games.py    # eğitim veri setini oluşturur
+python3 src/Train-Models/XGBoost_Model_ML.py --trials 60
+python3 src/Train-Models/XGBoost_Model_UO.py --trials 40
 ```
+
+Sezon tarihleri `config.toml` içindedir. Tahmin sırasında `Models/XGBoost_Models` içindeki en yeni model
+kendiliğinden seçilir. Dinlenme günü hesabı için `Data/nba-<yıl>-UTC.csv` fikstür dosyası kullanılır.
+
+## Kaynak depoya göre farklar
+
+Bu depo [kyleskom/NBA-Machine-Learning-Sports-Betting](https://github.com/kyleskom/NBA-Machine-Learning-Sports-Betting)
+üzerine kuruludur (veri, eğitim betikleri, dinlenme günü özelliği oradan). Eklenenler ve düzeltilenler:
+
+- Önerilen bahisler tablosu, Türkçe çıktı, kasa bazlı tutar önerisi, JSON çıktısı, sade web arayüzü.
+- 2024-25 sonrasında eğitim verisine maçın kendi sonucu sızıyordu (duyurulan %68,9 isabet bundan
+  kaynaklanıyordu); düzeltildi, veri seti yeniden kuruldu ve modeller temiz veriyle yeniden eğitildi.
+- Canlı tahminde alt/üst modelinin girdileri eğitimdekinden farklı sıradaydı; düzeltildi.
+- Olasılık kalibrasyonu tahmin sırasında sessizce devre dışı kalıyordu; artık JSON olarak saklanıp uygulanıyor.
+- Sezon ve adresler elle güncellenmek zorunda değil; eksik oranlar programı çökertmiyor.
+- Web arayüzündeki oyuncu/kadro pencereleri kaldırıldı (koda gömülü, başkasına ait bir API anahtarına bağlıydı).
 
 ## Testler
 
 ```bash
-python3 -m unittest Tests/Expected_Value_Test.py Tests/Recommender_Test.py
+python3 -m unittest discover -s Tests -p 'test_*.py'
 ```
