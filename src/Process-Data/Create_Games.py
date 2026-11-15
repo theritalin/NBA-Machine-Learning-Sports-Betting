@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import toml
 
+from src.Utils.Game_Features import FEATURE_COLUMNS, feature_table, franchise, load_game_history, select_odds_table  # noqa: F401
 from src.Utils.Dictionaries import (
     team_index_07,
     team_index_08,
@@ -118,19 +119,6 @@ def build_game_features(team_df, home_team, away_team, index_map):
     ])
 
 
-def select_odds_table(odds_con, season_key):
-    candidates = [
-        f"odds_{season_key}_new",
-        f"odds_{season_key}",
-        f"{season_key}_new",
-        f"{season_key}",
-    ]
-    for table_name in candidates:
-        if table_exists(odds_con, table_name):
-            return table_name
-    return None
-
-
 def main():
     config = toml.load(CONFIG_PATH)
 
@@ -141,6 +129,13 @@ def main():
     games = []
     days_rest_away = []
     days_rest_home = []
+    extra_features = []
+
+    # Elo / form features come from the full history (2007-08 on, as warm-up) through the same
+    # builder main.py uses for live predictions.
+    history_features = feature_table(load_game_history(ODDS_DB_PATH))
+    feature_lookup = {(d, h): vals for d, h, vals in zip(
+        history_features['date'], history_features['home'], history_features[FEATURE_COLUMNS].values.tolist())}
 
     with sqlite3.connect(ODDS_DB_PATH) as odds_con, sqlite3.connect(TEAMS_DB_PATH) as teams_con:
         for season_key in config["create-games"].keys():
@@ -166,6 +161,10 @@ def main():
                 game = build_game_features(team_df, row.Home, row.Away, index_map)
                 if game is None:
                     continue
+                extra = feature_lookup.get((date_str[:10], franchise(row.Home)))
+                if extra is None:
+                    raise RuntimeError(f"Elo/form özelliği bulunamadı: {date_str} {row.Home} (geçmiş ile oran tablosu uyuşmuyor)")
+                extra_features.append(extra)
                 # the stats table may be dated a day before the game; record the game date
                 game["Date"] = game["Date.1"] = date_str
 
@@ -196,6 +195,9 @@ def main():
     frame["OU-Cover"] = np.asarray(ou_cover)
     frame["Days-Rest-Home"] = np.asarray(days_rest_home)
     frame["Days-Rest-Away"] = np.asarray(days_rest_away)
+
+    for i, column in enumerate(FEATURE_COLUMNS):  # after Days-Rest-Away, in FEATURE_COLUMNS order
+        frame[column] = np.asarray([values[i] for values in extra_features])
 
     for field in frame.columns.values:
         if "TEAM_" in field or "Date" in field:
