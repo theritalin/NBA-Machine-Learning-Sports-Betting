@@ -43,7 +43,9 @@ Kısa cevap: **model bahis şirketini yenemiyor; öneriler kanıtlanmış bir ka
   oynansaydı yatırılan paranın %2-5'i kaybedilirdi (kabaca bahis şirketinin komisyonu kadar).
 - `python3 backtest.py` aynı stratejiyi 9 sezonda sınar (her sezon yalnızca önceki sezonlarla eğitilir,
   11.311 maç): toplam getiri +%1, ama sezonlara göre −%14 ile +%26 arasında; 9 sezonun 5'i zararda.
-  Yani sonuç şanstan ayırt edilemiyor.
+  Yani sonuç şanstan ayırt edilemiyor: sezon bloklu bootstrap ile %95 güven aralığı 0'ı içeriyor.
+  Aynı komut log-loss/Brier'ı piyasayla karşılaştırır ve alt/üst backtest'ini de koşar
+  (`--json YOL`, `--seasons N`, `--first-season YIL` seçenekleri var).
 - Alt/üst modeli yazı-turadan farksız (%50,4). Güveni neredeyse hep %50-52 olduğu için alt/üst bahsi
   pratikte hiç önerilmez.
 - Bu yüzden modelin olasılığı tek başına kullanılmaz; bahis şirketinin (komisyonu çıkarılmış) olasılığıyla
@@ -72,6 +74,13 @@ PYTHONPATH=. python3 src/Process-Data/Create_Games.py    # eğitim veri setini o
 python3 src/Train-Models/XGBoost_Model_ML.py --trials 60
 python3 src/Train-Models/XGBoost_Model_UO.py --trials 40
 ```
+
+Eğitim hedefi isabet değil olasılık kalitesidir (log-loss). İki hedef de `binary:logistic` ile eğitilir
+(alt/üstte push maçları atılır); arama zaman sıralı çapraz doğrulamayla yapılır, erken durdurma her katın
+eğitim kısmının son %10'unda, skor ayrılmış doğrulama katında ölçülür. Kalibrasyon kat-dışı tahminlerden
+öğrenilir; son %10 bekletme kümesinde ölçülür. Varsayılan olarak yayın modeli tüm veride yeniden eğitilir
+(`--no-refit` ilk %90'lık modeli kaydeder). Çıktılar: `XGBoost_<bekletme isabeti>%_<ML|UO>_<YYYYMMDD>.json`
+ile yanında `_calibration.json` ve `_meta.json` (bekletme metrikleri, parametreler, tur sayısı).
 
 Sezon tarihleri `config.toml` içindedir. Tahmin sırasında `Models/XGBoost_Models` içindeki en yeni model
 kendiliğinden seçilir. Dinlenme günü hesabı için `Data/nba-<yıl>-UTC.csv` fikstür dosyası kullanılır.

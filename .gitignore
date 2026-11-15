@@ -105,3 +105,6 @@ venv.bak/
 
 .idea
 .DS_Store
+
+# Ajanların geçici çalışma kopyaları
+.claude/worktrees/

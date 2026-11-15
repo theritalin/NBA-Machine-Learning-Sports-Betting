@@ -13,7 +13,13 @@ from src.Utils import Calibration
 MODEL_DIR = Path(__file__).resolve().parents[2] / "Models" / "XGBoost_Models"
 ACCURACY_PATTERN = re.compile(r"XGBoost_(\d+(?:\.\d+)?)%_")
 
+AUXILIARY_SUFFIXES = ("_calibration", "_meta")
+
 _models = {}
+
+
+def _warn(message):
+    print(f"Uyarı: {message}", file=sys.stderr)
 
 
 class BoosterWrapper(ClassifierMixin, BaseEstimator):
@@ -31,7 +37,8 @@ class BoosterWrapper(ClassifierMixin, BaseEstimator):
 
 
 def _select_model_path(kind):
-    candidates = [path for path in MODEL_DIR.glob(f"*_{kind}_*.json") if not path.stem.endswith("_calibration")]
+    candidates = [path for path in MODEL_DIR.glob(f"*_{kind}_*.json")
+                  if not path.stem.endswith(AUXILIARY_SUFFIXES)]
     if not candidates:
         raise FileNotFoundError(f"No XGBoost {kind} model found in {MODEL_DIR}")
 
@@ -46,11 +53,20 @@ def _load_calibrator(model_path):
     """Returns a function calibrating raw booster probabilities, or None."""
     json_path = model_path.with_name(f"{model_path.stem}_calibration.json")
     if json_path.exists():
-        calibration = Calibration.load(json_path)
+        try:
+            calibration = Calibration.load(json_path)
+            n_classes = len(calibration["classes"])
+            probe = np.array([0.5]) if calibration.get("binary") else np.full((1, n_classes), 1 / n_classes)
+            Calibration.apply(probe, calibration)
+        except Exception as e:  # unreadable or malformed JSON
+            _warn(f"kalibrasyon dosyası kullanılamadı ({json_path.name}: {type(e).__name__}), "
+                  "ham model olasılıkları kullanılacak")
+            return None
         return lambda probs, data: Calibration.apply(probs, calibration)
 
     legacy_path = model_path.with_name(f"{model_path.stem}_calibration.pkl")
     if not legacy_path.exists():
+        _warn(f"{model_path.name} için kalibrasyon dosyası yok, ham model olasılıkları kullanılacak")
         return None
     try:
         # Legacy scikit-learn calibrators were pickled by training scripts run as __main__,
@@ -79,7 +95,11 @@ def _load(kind):
 
         def predict_probs(data):
             probs = booster.predict(xgb.DMatrix(data))
-            return calibrate(probs, data) if calibrate else probs
+            if calibrate:
+                probs = calibrate(probs, data)
+            if probs.ndim == 1:  # binary:logistic -> [1-p, p], same layout as old softprob models
+                probs = np.column_stack([1 - probs, probs])
+            return probs
 
         _models[kind] = predict_probs
     return _models[kind]
@@ -99,7 +119,7 @@ def predict(features, totals, rest_days):
     over_probs = [None] * len(features)
     rows = [i for i, total in enumerate(totals) if total is not None]
     if rows:
-        # training column order: team stats, OU line, rest days. Classes: 0 under, 1 over, 2 push.
+        # training column order: team stats, OU line, rest days. Classes: 0 under, 1 over (old models: 2 push).
         uo_features = np.column_stack([features[rows], [float(totals[i]) for i in rows], rest_days[rows]])
         for i, p in zip(rows, _load("UO")(uo_features)):
             over_probs[i] = float(p[1] / (p[0] + p[1]))
