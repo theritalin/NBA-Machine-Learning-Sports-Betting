@@ -1,0 +1,22 @@
+GÖREV: Ürün sayfasındaki sayılara binlik ayraç ekle
+  (293437 yerine 293.437). Kullanıcılar büyük sayıları
+  okuyamıyor.
+SENİN DOSYALARIN: src/format.js, test/format.test.js
+DOKUNMA: src/odeme/* (başka ajan çalışıyor)
+ÖNCE OKU: docs/KURALLAR.md
+BAĞLAM: Ayraç olarak nokta istendi (docs/KARARLAR.md);
+  boşluk daha önce denendi ve geri alındı.
+BİTTİ TANIMI:
+  - tek bir num() biçimleyici var ve testli
+  - tüm testler geçiyor
+  - düzeltme geri alınınca yeni test kırılıyor
+DÖRT KOMŞU:
+  - kullananlar: num() başka nerede çağrılıyor?
+  - ikizler: sepette ve e-postada da ayraçsız sayı var mı?
+  - karşı parça: sayıyı geri okuyan form "293.437"
+    yazısını çözebiliyor mu?
+  - sessiz hata: geçersiz girdide boş metin mi dönüyor?
+RAPOR: {"dosyalar": [], "ozet": "", "testler": "",
+        "dortKomsu": "", "bakiye": [],
+        "acikSorunlar": [], "oneriler": [],
+        "firsatlar": []}
