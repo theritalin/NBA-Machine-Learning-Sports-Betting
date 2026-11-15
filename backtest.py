@@ -17,6 +17,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sqlite3
 
 import numpy as np
@@ -71,12 +72,19 @@ def load_recipe(kind, models_dir=MODELS_DIR):
     return binary_params(meta['params']), int(meta['num_boost_round']), os.path.basename(newest)
 
 
-def select_features(columns_dtypes, include_ou=False):
-    """All numeric columns that are not target/identity columns. `columns_dtypes` is df.dtypes."""
+MIN_BETS_FOR_CI = 30
+
+
+def select_features(columns_dtypes, include_ou=False, drop_pattern=None):
+    """All numeric columns that are not target/identity columns. `columns_dtypes` is df.dtypes.
+    Columns matching the regex `drop_pattern` (re.search) are left out (for A/B comparisons)."""
     excluded = set(NON_FEATURES) | set(EXTRA_COLUMNS)
     if include_ou:
         excluded.discard('OU')
-    return [c for c, t in columns_dtypes.items() if c not in excluded and pd.api.types.is_numeric_dtype(t)]
+    features = [c for c, t in columns_dtypes.items() if c not in excluded and pd.api.types.is_numeric_dtype(t)]
+    if drop_pattern:
+        features = [c for c in features if not re.search(drop_pattern, c)]
+    return features
 
 
 def log_loss(prob, outcome, eps=1e-15):
@@ -131,6 +139,13 @@ def bootstrap_ratio_ci(numerators, denominators, reps=BOOTSTRAP_REPS, seed=BOOTS
             'contains_zero': bool(low <= 0 <= high), 'valid_reps': int(ok.sum())}
 
 
+def ci_or_none(per_season_profits, n_bets):
+    """Bootstrap CI of profit per bet, or None when there are too few bets for it to mean anything."""
+    if n_bets < MIN_BETS_FOR_CI:
+        return None
+    return bootstrap_ratio_ci([p.sum() for p in per_season_profits], [len(p) for p in per_season_profits])
+
+
 def mean_or_none(values):
     values = np.asarray(values, float)
     return float(values.mean()) if len(values) else None
@@ -172,8 +187,8 @@ def train_predict(frame, features, label, train_mask, test_mask, recipe):
 
 # ---------------------------------------------------------------- runs
 
-def run_moneyline(games, seasons, recipe):
-    features = select_features(games.dtypes)
+def run_moneyline(games, seasons, recipe, drop_pattern=None):
+    features = select_features(games.dtypes, drop_pattern=drop_pattern)
     home_won = games['Home-Team-Win'].astype(int).values
     dec_home = games.ML_Home.map(american_to_decimal).values
     dec_away = games.ML_Away.map(american_to_decimal).values
@@ -216,15 +231,15 @@ def _totals(rows, profits, ll_diff_sum, count):
         allp = np.concatenate(per_season)
         total[f'{name}_bahis'] = int(len(allp))
         total[f'{name}_getiri'] = mean_or_none(allp)
-        ci[f'{name}_getiri'] = bootstrap_ratio_ci([p.sum() for p in per_season], [len(p) for p in per_season])
+        ci[f'{name}_getiri'] = ci_or_none(per_season, len(allp))
     ci['logloss_fark'] = bootstrap_ratio_ci(ll_diff_sum, count)
     total['guven_araligi'] = ci
     return total
 
 
-def run_totals(games, seasons, recipe):
+def run_totals(games, seasons, recipe, drop_pattern=None):
     ou_games = games[games['OU-Cover'].isin([0, 1])].reset_index(drop=True)
-    features = select_features(ou_games.dtypes, include_ou=True)
+    features = select_features(ou_games.dtypes, include_ou=True, drop_pattern=drop_pattern)
     went_over = ou_games['OU-Cover'].astype(int).values
     rows, profits, ll_sum, count, hits = [], [], [], [], []
     for season in seasons:
@@ -247,8 +262,7 @@ def run_totals(games, seasons, recipe):
         allp = np.concatenate(profits)
         total.update({'isabet': float(sum(hits) / sum(count)), 'logloss': float(sum(ll_sum) / sum(count)),
                       'bahis': int(len(allp)), 'getiri': mean_or_none(allp),
-                      'guven_araligi': {'getiri': bootstrap_ratio_ci([p.sum() for p in profits],
-                                                                       [len(p) for p in profits])}})
+                      'guven_araligi': {'getiri': ci_or_none(profits, len(allp))}})
     return {'satirlar': rows, 'toplam': total, 'ozellik_sayisi': len(features)}
 
 
@@ -265,6 +279,8 @@ def num(value, digits=4):
 
 
 def ci_line(label, ci, signed=True, unit='%'):
+    if ci is None:
+        return f"  {label}: yetersiz bahis (<{MIN_BETS_FOR_CI}); güven aralığı hesaplanmadı"
     if ci['low'] is None:
         return f"  {label}: hesaplanamadı (bahis yok)"
     fmt = (lambda v: pct(v, signed)) if unit == '%' else (lambda v: f"{v:+.4f}")
@@ -304,8 +320,8 @@ def print_totals(result):
     if ci:
         print("\nTOPLAM için sezon bloklu bootstrap:")
         print(ci_line('Alt/üst getirisi', ci['getiri']))
-        if result['toplam']['bahis'] < 30:
-            print(f"  UYARI: yalnızca {result['toplam']['bahis']} bahis var; aralık anlamsız, sonuç çıkarılamaz.")
+        if result['toplam']['bahis'] < MIN_BETS_FOR_CI:
+            print(f"  UYARI: yalnızca {result['toplam']['bahis']} bahis var; sonuç çıkarılamaz.")
     print(f"Not: -110 fiyatta başabaş isabeti {pct(BREAK_EVEN_110)}; yazı-tura {pct(0.5)}. Hiç bahis önerilmeyen "
           "sezonda getiri '-' gösterilir (0 değildir).")
 
@@ -329,6 +345,9 @@ def main(argv=None):
     parser.add_argument('--json', metavar='YOL', help='tüm sayıları JSON olarak bu dosyaya yaz')
     parser.add_argument('--first-season', type=int, default=FIRST_TEST_SEASON, metavar='YIL',
                         help=f'ilk test sezonu (varsayılan {FIRST_TEST_SEASON})')
+    parser.add_argument('--drop-features', metavar='REGEX',
+                        help="adı bu düzenli ifadeye uyan özellik sütunlarını modele verme (karşılaştırma için), "
+                             "örn. '^(Elo|Form|HomeSplit|AwaySplit|Games7|B2B)'")
     parser.add_argument('--seasons', type=int, metavar='N', help='yalnız son N sezonu test et')
     args = parser.parse_args(argv)
 
@@ -346,10 +365,12 @@ def main(argv=None):
     print(f"Test sezonları: {seasons[0]}-{seasons[-1]} ({len(seasons)} sezon). Tarif ML: {ml_recipe[2]} "
           f"({ml_recipe[1]} tur), UO: {ou_recipe[2]} ({ou_recipe[1]} tur).")
 
-    moneyline = run_moneyline(games, seasons, ml_recipe)
+    if args.drop_features:
+        print(f"Atılan özellik deseni: {args.drop_features}")
+    moneyline = run_moneyline(games, seasons, ml_recipe, args.drop_features)
     print(f"Maç sonucu modelinde kullanılan özellik sayısı: {moneyline['ozellik_sayisi']}")
     print_moneyline(moneyline)
-    totals = run_totals(games, seasons, ou_recipe)
+    totals = run_totals(games, seasons, ou_recipe, args.drop_features)
     print(f"\nAlt/üst modelinde kullanılan özellik sayısı (OU çizgisi dahil): {totals['ozellik_sayisi']}")
     print_totals(totals)
     print("\nGetiri = yatırılan her 100 birim için kâr/zarar (sabit tutarla oynanırsa). "
@@ -360,6 +381,7 @@ def main(argv=None):
         payload = {'veri': stats, 'sezonlar': [int(s) for s in seasons],
                    'tarif': {'ML': {'params': ml_recipe[0], 'num_boost_round': ml_recipe[1], 'kaynak': ml_recipe[2]},
                              'UO': {'params': ou_recipe[0], 'num_boost_round': ou_recipe[1], 'kaynak': ou_recipe[2]}},
+                   'atilan_ozellik_deseni': args.drop_features,
                    'bootstrap': {'tekrar': BOOTSTRAP_REPS, 'tohum': BOOTSTRAP_SEED},
                    'mac_sonucu': moneyline, 'alt_ust': totals}
         with open(args.json, 'w') as handle:

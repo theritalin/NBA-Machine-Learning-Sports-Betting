@@ -1,0 +1,10 @@
+{
+  "method": "sigmoid",
+  "binary": true,
+  "classes": [
+    {
+      "slope": 1.0171945908209645,
+      "intercept": -0.07160647578835835
+    }
+  ]
+}

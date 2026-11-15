@@ -152,6 +152,76 @@ class PredictTest(RunnerTestCase):
         np.testing.assert_allclose(probs.sum(axis=1), 1.0, rtol=1e-6)
 
 
+class ExtraFeaturesTest(RunnerTestCase):
+    """Elo/form columns: appended only for models trained with them."""
+    N_EXTRA = 16
+
+    def test_ml_model_with_extra_columns_gets_stats_rest_extra(self):
+        n = N_STATS + 2 + self.N_EXTRA
+        _, model = self.write_model("ML", "XGBoost_60.0%_ML_20260101.json", n, N_STATS + 2)  # signal: first extra
+        self.write_model("UO", "XGBoost_50.0%_UO_20260101.json", N_STATS + 3, 0)
+        rng = np.random.default_rng(1)
+        features, extra = rng.random((3, N_STATS)) * 50, rng.random((3, self.N_EXTRA)) * 50
+        rest = [[1, 2], [2, 2], [3, 1]]
+        home, _ = Runner.predict(features, [None] * 3, rest, extra)
+        expected = model.predict(xgb.DMatrix(np.column_stack([features, rest, extra])))
+        np.testing.assert_allclose(home, expected, rtol=1e-5)
+        # the model reacts to the first extra column: probability follows it
+        low = np.zeros((2, self.N_EXTRA))
+        high = low.copy()
+        high[:, 0] = 50
+        same = np.full((2, N_STATS), 25.0)
+        p_low, _ = Runner.predict(same, [None] * 2, [[1, 1]] * 2, low)
+        p_high, _ = Runner.predict(same, [None] * 2, [[1, 1]] * 2, high)
+        self.assertGreater(min(p_high), max(p_low) + 0.3)
+
+    def test_uo_model_with_extra_columns_order_is_stats_line_rest_extra(self):
+        self.write_model("ML", "XGBoost_60.0%_ML_20260101.json", N_STATS + 2, 0)
+        _, uo_model = self.write_model("UO", "XGBoost_50.0%_UO_20260101.json", N_STATS + 3 + self.N_EXTRA, N_STATS)
+        rng = np.random.default_rng(2)
+        features, extra = rng.random((2, N_STATS)) * 50, rng.random((2, self.N_EXTRA)) * 50
+        rest = np.array([[1.0, 7.0], [2.0, 3.0]])
+        _, over = Runner.predict(features, [10.0, 40.0], rest, extra)
+        expected = uo_model.predict(xgb.DMatrix(np.column_stack([features, [10.0, 40.0], rest, extra])))
+        np.testing.assert_allclose(over, expected, rtol=1e-5)
+        self.assertGreater(over[1], over[0] + 0.3)  # follows the line, which sits right after the stats
+
+    def test_old_sized_model_ignores_extra(self):
+        _, model = self.write_model("ML", "XGBoost_60.0%_ML_20260101.json", N_STATS + 2, 0)
+        _, uo_model = self.write_model("UO", "XGBoost_50.0%_UO_20260101.json", N_STATS + 3, 0)
+        rng = np.random.default_rng(3)
+        features, extra = rng.random((2, N_STATS)) * 50, rng.random((2, self.N_EXTRA)) * 50
+        rest = [[1, 2], [2, 2]]
+        with_extra = Runner.predict(features, [220.5, 230.0], rest, extra)
+        without = Runner.predict(features, [220.5, 230.0], rest)
+        self.assertEqual(with_extra, without)
+        np.testing.assert_allclose(with_extra[0], model.predict(xgb.DMatrix(np.column_stack([features, rest]))),
+                                   rtol=1e-5)
+
+    def test_mismatched_width_raises_instead_of_guessing(self):
+        self.write_model("UO", "XGBoost_50.0%_UO_20260101.json", N_STATS + 3, 0)
+        features = np.random.default_rng(4).random((2, N_STATS)) * 50
+        rest = [[1, 2], [2, 2]]
+        # model wants stats + rest + 5, but extra has 16 columns
+        self.write_model("ML", "XGBoost_60.0%_ML_20260101.json", N_STATS + 2 + 5, 0)
+        with self.assertRaisesRegex(RuntimeError, "ML modeli 111 özellik bekliyor"):
+            Runner.predict(features, [None, None], rest, np.zeros((2, self.N_EXTRA)))
+        # a new-sized model but no extra given
+        Runner._models.clear()
+        self.write_model("ML", "XGBoost_61.0%_ML_20260102.json", N_STATS + 2 + self.N_EXTRA, 0)
+        with self.assertRaisesRegex(RuntimeError, "verilmedi"):
+            Runner.predict(features, [None, None], rest)
+
+    def test_documented_smoke_call_returns_probabilities(self):
+        self.write_model("ML", "XGBoost_60.0%_ML_20260101.json", N_STATS + 2, 0)
+        self.write_model("UO", "XGBoost_50.0%_UO_20260101.json", N_STATS + 3, 0)
+        home, over = Runner.predict(np.random.rand(2, N_STATS) * 50, [220.5, None], [[1, 2], [2, 2]],
+                                    np.zeros((2, self.N_EXTRA)))
+        self.assertTrue(all(0 <= p <= 1 for p in home))
+        self.assertTrue(0 <= over[0] <= 1)
+        self.assertIsNone(over[1])
+
+
 class CalibrationTest(unittest.TestCase):
     def test_binary_roundtrip_and_two_column_unchanged(self):
         rng = np.random.default_rng(0)

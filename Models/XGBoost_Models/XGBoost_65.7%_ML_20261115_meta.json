@@ -1,0 +1,31 @@
+{
+  "params": {
+    "max_depth": 2,
+    "eta": 0.013928280440620503,
+    "subsample": 0.6055745150832806,
+    "colsample_bytree": 0.6148280149994276,
+    "min_child_weight": 1.6747963044650571,
+    "gamma": 3.3882933680642875,
+    "lambda": 0.17525281770493772,
+    "alpha": 0.23257835674723445,
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "seed": 70,
+    "tree_method": "hist"
+  },
+  "num_boost_round": 247,
+  "feature_count": 122,
+  "trained_rows": 16963,
+  "refit_on_all": true,
+  "heldout": {
+    "n": 1697,
+    "start_date": "2024-11-13",
+    "accuracy": 0.6570418385385975,
+    "log_loss": 0.6184819765497307,
+    "brier": 0.2147594216649753,
+    "accuracy_raw": 0.652327637006482,
+    "log_loss_raw": 0.6195116639137268
+  },
+  "cv_log_loss": 0.6211478352546692,
+  "trials": 40
+}
